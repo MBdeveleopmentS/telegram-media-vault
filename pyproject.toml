@@ -18,7 +18,7 @@ dependencies = [
     "asyncpg==0.32.0",
     "alembic==1.20.1",
     "redis==8.1.0",
-    "pydantic>=2.13,<2.14",
+    "pydantic>=2.13,<2.15",
     "pydantic-settings==2.16.1",
     "cryptography==50.0.2",
     "structlog==26.1.0",
