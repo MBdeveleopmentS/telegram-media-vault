@@ -42,7 +42,7 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
       - run: docker build -t media-vault:ci .
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with: { image-ref: "media-vault:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1" }
       - uses: anchore/sbom-action@v0
         with: { image: "media-vault:ci", format: spdx-json, output-file: sbom.spdx.json }
