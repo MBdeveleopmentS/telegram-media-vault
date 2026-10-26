@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>שלב 1 מתוך 2: מספר טלפון</h2>
+{% include "_error.html" %}
+<section class="notice">
+  <h3>לפני שמתחברים — חשוב לדעת</h3>
+  <ul>
+    <li>חיבור חשבון מעניק לשירות, מבחינה טכנית, גישה רחבה לחשבון הטלגרם שלכם. טלגרם לא מאפשרת להגביל חיבור כזה לצ'אטים מסוימים.</li>
+    <li>השירות בנוי כך שיעבד <strong>רק</strong> צ'אטים שתאשרו במפורש בבוט, ורק תמונות וסרטונים חדשים.</li>
+    <li>הסשן נשמר מוצפן. מספר הטלפון, הקוד והסיסמה אינם נשמרים.</li>
+    <li>הקבצים יישלחו לשיחה שלכם עם הבוט, כלומר יישמרו בענן של טלגרם.</li>
+    <li>אפשר להתנתק בכל רגע עם ‎/disconnect.</li>
+  </ul>
+</section>
+<form method="post" action="/auth/flow/phone" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label for="phone">מספר טלפון (כולל קידומת מדינה)</label>
+  <input id="phone" name="phone" type="tel" inputmode="tel" dir="ltr" placeholder="+972501234567" required maxlength="20">
+  <label class="check"><input type="checkbox" name="consent" value="yes" required> קראתי והבנתי, ואני מאשר/ת את החיבור</label>
+  <button type="submit">שליחת קוד</button>
+</form>
+{% endblock %}

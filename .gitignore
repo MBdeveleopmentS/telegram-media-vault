@@ -1,0 +1,30 @@
+# secrets & state — never commit
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+secrets/
+data/
+*.db
+*.sqlite*
+*.pem
+*.key
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# media scratch
+tmp/
+vault-tmp/
+sbom*.json

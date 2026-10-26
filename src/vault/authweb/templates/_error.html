@@ -1,0 +1,16 @@
+{% set errors = {
+  "consent_required": "יש לאשר את תנאי החיבור כדי להמשיך.",
+  "invalid_phone": "מספר הטלפון אינו תקין. הזינו אותו בפורמט בינלאומי, למשל ‎+972501234567.",
+  "phone_banned": "טלגרם חסמה את המספר הזה.",
+  "rate_limited": "יותר מדי ניסיונות. המתינו מעט ונסו שוב.",
+  "telegram_error": "טלגרם החזירה שגיאה. נסו שוב בעוד רגע.",
+  "invalid_code": "הקוד שגוי. בדקו את ההודעה מטלגרם ונסו שוב.",
+  "invalid_password": "הסיסמה שגויה. נסו שוב.",
+} %}
+{% if error %}
+  {% if error.startswith("flood:") %}
+    <p class="error" role="alert">טלגרם מבקשת להמתין לפני ניסיון נוסף (כ־{{ (error[6:]|int // 60) + 1 }} דקות).</p>
+  {% else %}
+    <p class="error" role="alert">{{ errors.get(error, "אירעה שגיאה. נסו שוב.") }}</p>
+  {% endif %}
+{% endif %}

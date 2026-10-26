@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>שלב 2 מתוך 2: קוד אימות</h2>
+{% include "_error.html" %}
+<p>טלגרם שלחה לכם קוד — בדרך כלל כהודעה מהחשבון הרשמי "Telegram" באפליקציה. הזינו אותו כאן.</p>
+<p class="hint">⚠️ אל תעבירו את הקוד לאף אחד ואל תשלחו אותו בצ'אט. טלגרם מבטלת קודים שנשלחו בצ'אט.</p>
+<form method="post" action="/auth/flow/code" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label for="code">קוד אימות</label>
+  <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" dir="ltr" required maxlength="12">
+  <button type="submit">אישור</button>
+</form>
+{% endblock %}

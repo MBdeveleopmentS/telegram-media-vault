@@ -1,0 +1,48 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env: { POSTGRES_USER: t, POSTGRES_PASSWORD: t, POSTGRES_DB: t }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U t" --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .
+      - run: ruff check src tests migrations && ruff format --check src tests migrations
+      - run: mypy
+      - run: pytest -q
+      - name: migrations + tests on PostgreSQL
+        env:
+          DATABASE_URL: postgresql+asyncpg://t:t@localhost:5432/t
+          TEST_DATABASE_URL: postgresql+asyncpg://t:t@localhost:5432/t
+        run: |
+          alembic upgrade head && alembic check && alembic downgrade base
+          pytest -q
+
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pip-audit && pip-audit --require-hashes -r requirements.lock
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: docker build -t media-vault:ci .
+      - uses: aquasecurity/trivy-action@0.28.0
+        with: { image-ref: "media-vault:ci", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1" }
+      - uses: anchore/sbom-action@v0
+        with: { image: "media-vault:ci", format: spdx-json, output-file: sbom.spdx.json }

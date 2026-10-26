@@ -1,0 +1,187 @@
+# Telegram Media Vault — local / single-host deployment.
+#   cp .env.example .env && python3 scripts/gen_env_secrets.py >> .env   (then fill BOT_TOKEN etc.)
+#   make up
+#
+# Security posture:
+# - PostgreSQL and Redis live on an internal-only network and publish no ports.
+# - Each component gets only the secrets it needs (see `environment:` blocks).
+# - Containers run as uid 10001, read-only root FS, all capabilities dropped.
+# - Media temp storage for the engine is a RAM-backed tmpfs (never written to disk
+#   unless the host swaps). See docs/DEPLOYMENT.md for production hardening.
+
+name: media_vault
+
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  restart: unless-stopped
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+
+x-common-env: &common-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379/0
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8085}
+  ENGINE_SHARDS: "1"
+  FREE_MAX_CHATS: ${FREE_MAX_CHATS:-3}
+  FREE_MAX_FILE_MIB: ${FREE_MAX_FILE_MIB:-5}
+  PREMIUM_MAX_CHATS: ${PREMIUM_MAX_CHATS:-10}
+  PREMIUM_MAX_FILE_MIB: ${PREMIUM_MAX_FILE_MIB:-15}
+  PREMIUM_PRICE_STARS: ${PREMIUM_PRICE_STARS:-150}
+  PREMIUM_PERIOD_DAYS: ${PREMIUM_PERIOD_DAYS:-90}
+  SUPPORT_CONTACT: ${SUPPORT_CONTACT:-@your_support_handle}
+
+services:
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    restart: unless-stopped
+    mem_limit: 256m
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=40"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_USER: vault_owner
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD}
+      POSTGRES_DB: vault
+      VAULT_BOT_DB_PASSWORD: ${VAULT_BOT_DB_PASSWORD:?}
+      VAULT_AUTHWEB_DB_PASSWORD: ${VAULT_AUTHWEB_DB_PASSWORD:?}
+      VAULT_ENGINE_DB_PASSWORD: ${VAULT_ENGINE_DB_PASSWORD:?}
+      VAULT_SCHEDULER_DB_PASSWORD: ${VAULT_SCHEDULER_DB_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault_owner -d vault"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    restart: unless-stopped
+    mem_limit: 128m
+    security_opt: ["no-new-privileges:true"]
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --save '' --protected-mode yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?}
+    volumes:
+      - redisdata:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    image: media-vault:local
+    <<: *hardening
+    restart: "no"
+    command: ["sh", "-c", "alembic upgrade head && python -m vault.cli apply-grants"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vault_owner:${POSTGRES_OWNER_PASSWORD}@postgres:5432/vault
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  bot:
+    image: media-vault:local
+    <<: *hardening
+    command: ["python", "-m", "vault.bot.main"]
+    mem_limit: 320m
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql+asyncpg://vault_bot:${VAULT_BOT_DB_PASSWORD}@postgres:5432/vault
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?}
+      BOT_MODE: ${BOT_MODE:-polling}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      # deliberately absent: TELEGRAM_API_HASH, SESSION_ENCRYPTION_KEYS
+    networks: [internal, egress]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-m", "vault.health", "bot"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Optional: HTTPS login page (only needed if you prefer a web login over the in-chat flow).
+  # Enable with: docker compose --profile web up -d
+  authweb:
+    profiles: ["web"]
+    image: media-vault:local
+    <<: *hardening
+    command: ["python", "-m", "vault.authweb.main"]
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql+asyncpg://vault_authweb:${VAULT_AUTHWEB_DB_PASSWORD}@postgres:5432/vault
+      BOT_TOKEN: ${BOT_TOKEN:?}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?set TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?set TELEGRAM_API_HASH}
+      SESSION_ENCRYPTION_KEYS: ${SESSION_ENCRYPTION_KEYS:?}
+      SESSION_ENCRYPTION_ACTIVE_KEY_ID: ${SESSION_ENCRYPTION_ACTIVE_KEY_ID:-k1}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?}
+      AUTHWEB_BIND_HOST: 0.0.0.0
+      AUTHWEB_PORT: "8085"
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+    ports:
+      # Localhost only. In production, terminate TLS in a reverse proxy in front of this.
+      - "127.0.0.1:${AUTHWEB_HOST_PORT:-8085}:8085"
+    networks: [internal, egress]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8085/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  engine:
+    image: media-vault:local
+    <<: *hardening
+    command: ["python", "-m", "vault.engine.main"]
+    mem_limit: 640m   # includes the RAM-backed media tmpfs below
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql+asyncpg://vault_engine:${VAULT_ENGINE_DB_PASSWORD}@postgres:5432/vault
+      BOT_TOKEN: ${BOT_TOKEN:?}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?}
+      SESSION_ENCRYPTION_KEYS: ${SESSION_ENCRYPTION_KEYS:?}
+      SESSION_ENCRYPTION_ACTIVE_KEY_ID: ${SESSION_ENCRYPTION_ACTIVE_KEY_ID:-k1}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?}
+      ENGINE_SHARD: "0"
+      # The engine also runs the in-chat login service and the scheduler (2 app processes total).
+      ENGINE_HOSTS_LOGIN: "true"
+      ENGINE_HOSTS_SCHEDULER: "true"
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      TEMP_DIR: /var/lib/vault/tmp
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      # RAM-backed media scratch space: >= WORKER_CONCURRENCY * PREMIUM_MAX_FILE_MIB, with headroom.
+      - /var/lib/vault/tmp:size=192m,mode=0700,uid=10001,gid=10001
+    networks: [internal, egress]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-m", "vault.health", "engine"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  internal:
+    internal: true
+  egress: {}
+
+volumes:
+  pgdata: {}
+  redisdata: {}
