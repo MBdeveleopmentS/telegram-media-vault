@@ -17,7 +17,7 @@ jobs:
         options: --health-cmd "pg_isready -U t" --health-interval 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .
       - run: ruff check src tests migrations && ruff format --check src tests migrations
@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: pip install pip-audit && pip-audit --require-hashes -r requirements.lock
       - uses: gitleaks/gitleaks-action@v2
